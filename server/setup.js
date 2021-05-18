@@ -34,7 +34,7 @@ module.exports = () => {
   // ----------------------------------------
 
   app.use(favicon(path.join(WIKI.ROOTPATH, 'assets', 'favicon.ico')))
-  app.use(express.static(path.join(WIKI.ROOTPATH, 'assets')))
+  app.use('/_assets', express.static(path.join(WIKI.ROOTPATH, 'assets')))
 
   // ----------------------------------------
   // View Engine Setup
@@ -104,6 +104,7 @@ module.exports = () => {
         host: '',
         port: 465,
         secure: true,
+        verifySSL: true,
         user: '',
         pass: '',
         useDKIM: false,
@@ -185,6 +186,7 @@ module.exports = () => {
         'sessionSecret',
         'telemetry',
         'theming',
+        'uploads',
         'title'
       ], false)
 
@@ -251,9 +253,18 @@ module.exports = () => {
         throw new Error('Incorrect groups auto-increment configuration! Should start at 0 and increment by 1. Contact your database administrator.')
       }
 
-      // Load authentication strategies + enable local
-      await WIKI.models.authentication.refreshStrategiesFromDisk()
-      await WIKI.models.authentication.query().patch({ isEnabled: true }).where('key', 'local')
+      // Load local authentication strategy
+      await WIKI.models.authentication.query().insert({
+        key: 'local',
+        config: {},
+        selfRegistration: false,
+        isEnabled: true,
+        domainWhitelist: {v: []},
+        autoEnrollGroups: {v: []},
+        order: 0,
+        strategyKey: 'local',
+        displayName: 'Local'
+      })
 
       // Load editors + enable default
       await WIKI.models.editors.refreshEditorsFromDisk()
@@ -323,7 +334,9 @@ module.exports = () => {
                 kind: 'link',
                 label: 'Home',
                 target: '/',
-                targetType: 'home'
+                targetType: 'home',
+                visibilityMode: 'all',
+                visibilityGroups: null
               }
             ]
           }
@@ -365,7 +378,7 @@ module.exports = () => {
   // ----------------------------------------
 
   app.use(function (req, res, next) {
-    var err = new Error('Not Found')
+    const err = new Error('Not Found')
     err.status = 404
     next(err)
   })
@@ -430,7 +443,7 @@ module.exports = () => {
     WIKI.logger.info('HTTP Server: [ RUNNING ]')
     WIKI.logger.info('🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻🔻')
     WIKI.logger.info('')
-    WIKI.logger.info(`Browse to http://localhost:${WIKI.config.port}/ to complete setup!`)
+    WIKI.logger.info(`Browse to http://YOUR-SERVER-IP:${WIKI.config.port}/ to complete setup!`)
     WIKI.logger.info('')
     WIKI.logger.info('🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺🔺')
   })

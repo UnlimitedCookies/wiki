@@ -77,10 +77,7 @@ module.exports = {
             throw err
           }
         }
-        if (!this.config.sshPort || (_.isString(this.config.sshPort) && _.isEmpty(this.config.sshPort.length)) || (_.isSafeInteger(this.config.sshPort) && this.config.sshPort <= 0)) {
-          this.config.sshPort = 22
-        }
-        await this.git.addConfig('core.sshCommand', `ssh -i "${this.config.sshPrivateKeyPath}" -o StrictHostKeyChecking=no -p ${this.config.sshPort}`)
+        await this.git.addConfig('core.sshCommand', `ssh -i "${this.config.sshPrivateKeyPath}" -o StrictHostKeyChecking=no`)
         WIKI.logger.info('(STORAGE/GIT) Adding origin remote via SSH...')
         await this.git.addRemote('origin', this.config.repoUrl)
         break
@@ -187,6 +184,7 @@ module.exports = {
 
           const contentPath = pageHelper.getPagePath(item.relPath)
           await WIKI.models.pages.deletePage({
+            user: user,
             path: contentPath.path,
             locale: contentPath.locale,
             skipStorage: true
@@ -302,19 +300,24 @@ module.exports = {
    */
   async renamed(page) {
     WIKI.logger.info(`(STORAGE/GIT) Committing file move from [${page.localeCode}] ${page.path} to [${page.destinationLocaleCode}] ${page.destinationPath}...`)
-    let sourceFilePath = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
-    let destinationFilePath = `${page.destinationPath}.${pageHelper.getFileExtension(page.contentType)}`
+    let sourceFileName = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
+    let destinationFileName = `${page.destinationPath}.${pageHelper.getFileExtension(page.contentType)}`
 
     if (WIKI.config.lang.namespacing) {
       if (WIKI.config.lang.code !== page.localeCode) {
-        sourceFilePath = `${page.localeCode}/${sourceFilePath}`
+        sourceFileName = `${page.localeCode}/${sourceFileName}`
       }
       if (WIKI.config.lang.code !== page.destinationLocaleCode) {
-        destinationFilePath = `${page.destinationLocaleCode}/${destinationFilePath}`
+        destinationFileName = `${page.destinationLocaleCode}/${destinationFileName}`
       }
     }
 
-    await this.git.mv(`./${sourceFilePath}`, `./${destinationFilePath}`)
+    const sourceFilePath = path.join(this.repoPath, sourceFileName)
+    const destinationFilePath = path.join(this.repoPath, destinationFileName)
+    await fs.move(sourceFilePath, destinationFilePath)
+
+    await this.git.rm(`./${sourceFileName}`)
+    await this.git.add(`./${destinationFileName}`)
     await this.git.commit(`docs: rename ${page.path} to ${page.destinationPath}`, [sourceFilePath, destinationFilePath], {
       '--author': `"${page.moveAuthorName} <${page.moveAuthorEmail}>"`
     })
@@ -359,6 +362,9 @@ module.exports = {
     await this.git.commit(`docs: rename ${asset.path} to ${asset.destinationPath}`, [asset.path, asset.destinationPath], {
       '--author': `"${asset.moveAuthorName} <${asset.moveAuthorEmail}>"`
     })
+  },
+  async getLocalLocation (asset) {
+    return path.join(this.repoPath, asset.path)
   },
   /**
    * HANDLERS
@@ -405,12 +411,15 @@ module.exports = {
 
     // -> Pages
     await pipeline(
-      WIKI.models.knex.column('path', 'localeCode', 'title', 'description', 'contentType', 'content', 'isPublished', 'updatedAt').select().from('pages').where({
+      WIKI.models.knex.column('id', 'path', 'localeCode', 'title', 'description', 'contentType', 'content', 'isPublished', 'updatedAt', 'createdAt', 'editorKey').select().from('pages').where({
         isPrivate: false
       }).stream(),
       new stream.Transform({
         objectMode: true,
         transform: async (page, enc, cb) => {
+          const pageObject = await WIKI.models.pages.query().findById(page.id)
+          page.tags = await pageObject.$relatedQuery('tags')
+          
           let fileName = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
           if (WIKI.config.lang.namespacing && WIKI.config.lang.code !== page.localeCode) {
             fileName = `${page.localeCode}/${fileName}`
